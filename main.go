@@ -1,19 +1,19 @@
 package main
 
 import (
-	"fmt"
+	"math/rand"
 	"net"
-	"strconv"
-	"strings"
-	"syscall"
+	"os"
 	"time"
-	"unsafe"
 
-	"golang.org/x/net/ipv4"
-
+	"./iana" // golang's STUPID internal tag forces me to do this instead of accessing https://godoc.org/golang.org/x/net/internal/iana directly
 	"github.com/gidoBOSSftw5731/log"
 	"github.com/tatsushid/go-fastping"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
 )
+
+var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 var overhead = 28
 
@@ -22,26 +22,20 @@ var mtus = []int{576 - overhead, 1152 - overhead, 1480 - overhead, 4352 - overhe
 
 var maxMTU int
 
-type icmpPkt struct {
-	pktType, code, checksum, one, identifier, two, sequenceNum, three byte
-	payload                                                           []byte
-	four                                                              byte
-}
-
 func main() {
 	log.SetCallDepth(4)
 
 	ip := "192.110.255.55"
-	ipSlice := strings.Split(ip, ".")
+	/*ipSlice := strings.Split(ip, ".")
 
 	oct0, err := strconv.Atoi(ipSlice[0])
 	oct1, err := strconv.Atoi(ipSlice[1])
 	oct2, err := strconv.Atoi(ipSlice[2])
-	oct3, err := strconv.Atoi(ipSlice[3])
+	oct3, err := strconv.Atoi(ipSlice[3]) */
 
 	result := 0
 
-	result, err = testMTU(ip)
+	result, err := testMTU(ip)
 	if err != nil || result == 0 {
 		log.Panicf("Error with MTU! Maximum allowed %v, error: %v", result, err)
 	}
@@ -49,20 +43,52 @@ func main() {
 
 	maxMTU = result
 
-	fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
-
-	addr := syscall.SockaddrInet4{
-		Port: 0,
-		Addr: [4]byte{byte(oct0), byte(oct1), byte(oct2), byte(oct3)},
+	b := make([]rune, 1024)
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
 	}
 
-	p := pkt()
+	sendEcho(ip, string(b))
 
-	err = syscall.Sendto(fd, p, 0, &addr)
+}
+
+func sendEcho(ip, payload string) {
+	c, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
-		log.Panicln(err)
+		log.Fatalf("listen err, %s", err)
+	}
+	defer c.Close()
+
+	wm := icmp.Message{
+		Type: ipv4.ICMPTypeEcho, Code: 0,
+		Body: &icmp.Echo{
+			ID: os.Getpid() & 0xffff, Seq: 1,
+			Data: []byte(payload),
+		},
+	}
+	wb, err := wm.Marshal(nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err := c.WriteTo(wb, &net.IPAddr{IP: net.ParseIP(ip)}); err != nil {
+		log.Fatalf("WriteTo err, %s", err)
 	}
 
+	rb := make([]byte, 1500)
+	n, peer, err := c.ReadFrom(rb)
+	if err != nil {
+		log.Fatal(err)
+	}
+	rm, err := icmp.ParseMessage(iana.ProtocolICMP, rb[:n])
+	if err != nil {
+		log.Fatal(err)
+	}
+	switch rm.Type {
+	case ipv4.ICMPTypeEchoReply:
+		log.Printf("got reflection from %v", peer)
+	default:
+		log.Printf("got %+v; want echo reply", rm)
+	}
 }
 
 //testMTU is a function to test which MTUs are available to use.
@@ -99,42 +125,3 @@ func testMTU(ip string) (int, error) {
 
 	return result, err
 }
-
-//pkt is a function to make an ICMP packet.
-func pkt() []byte {
-	h := ipv4.Header{
-		Version:  4,
-		Len:      20,
-		TotalLen: 20 + 10, // 20 bytes for IP, 10 for ICMP
-		TTL:      64,
-		Protocol: 1, // ICMP
-		Dst:      net.IPv4(127, 0, 0, 1),
-		// ID, Src and Checksum will be set for us by the kernel
-	}
-
-	payload := []byte("foofoofoo")
-
-	var icmp = icmpPkt{
-		8,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		0,
-		payload,
-		0xDE}
-	//cs := csum([]byte(fmt.Sprint(icmp)))
-	cs := csum(icmp)
-	icmp.checksum = byte(cs)
-	icmp.one = byte(cs >> 8)
-
-	out, err := h.Marshal()
-	if err != nil {
-		log.Fatal(err)
-	}
-	return append(out, []byte(fmt.Sprint(icmp))...)
-}
-
-
