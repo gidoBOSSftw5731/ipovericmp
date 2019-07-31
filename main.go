@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"./iana" // golang's STUPID internal tag forces me to do this instead of accessing https://godoc.org/golang.org/x/net/internal/iana directly
@@ -43,13 +44,44 @@ func main() {
 
 	maxMTU = result
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	go icmpListen(&wg)
+
+	b := randomPayload()
+	sendEcho(ip, string(b))
+
+	wg.Wait()
+
+}
+
+func icmpListen(wg *sync.WaitGroup) {
+	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	for {
+		var msg []byte
+		length, sourceIP, err := conn.ReadFrom(msg)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		log.Printf("message = '%s', length = %d, source-ip = %s", string(msg), length, sourceIP)
+		wg.Done()
+	}
+}
+
+func randomPayload() []rune {
 	b := make([]rune, 1024)
 	for i := range b {
 		b[i] = letters[rand.Intn(len(letters))]
 	}
-
-	sendEcho(ip, string(b))
-
+	return b
 }
 
 func sendEcho(ip, payload string) {
