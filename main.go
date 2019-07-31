@@ -72,7 +72,7 @@ func icmpListen(wg *sync.WaitGroup) {
 		}
 
 		log.Printf("message = '%s', length = %d, source-ip = %s", string(msg), length, sourceIP)
-		wg.Done()
+		//wg.Done()
 	}
 }
 
