@@ -57,7 +57,7 @@ func main() {
 }
 
 func icmpListen(wg *sync.WaitGroup) {
-	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	conn, err := icmp.ListenPacket("ip:icmp", "0.0.0.0")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -154,6 +154,8 @@ func testMTU(ip string) (int, error) {
 			continue
 		}
 	}
+
+	//log.Tracef("using %v mtu", result)
 
 	return result, err
 }
